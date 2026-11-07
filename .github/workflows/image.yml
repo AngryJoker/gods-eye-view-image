@@ -48,7 +48,7 @@ jobs:
         run: docker run --rm --entrypoint sh "$IMG" -c 'test ! -e /app/.env'
       - name: testar com as restrições do compose
         run: |
-          docker run -d --name t --user 1000:1000 --read-only --cap-drop ALL \
+          docker run -d --name gevtest --user 1000:1000 --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 1g --pids-limit 256 \
             --tmpfs /tmp \
             --tmpfs /app/.gev-cache:uid=1000,gid=1000 \
@@ -62,12 +62,12 @@ jobs:
             if curl -fsS -o /dev/null -H 'Host: gev.newt-matrix.ts.net' http://127.0.0.1:4173/; then ok=1; break; fi
             sleep 3
           done
-          docker logs --tail 40 t
+          docker logs --tail 40 gevtest
           test -n "$ok"
           code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: falso.example' http://127.0.0.1:4173/)
           echo "Host falso: $code"
           test "$code" = 403
-          docker rm -f t
+          docker rm -f gevtest
       - name: guardar a imagem
         run: docker save -o image.tar "$IMG"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
