@@ -1,0 +1,97 @@
+# Imagem do God's Eye View para o TrueNAS: código do projeto num commit fixo, com o vite 6.4.5.
+# A construção e os testes correm sem segredos nem permissões de escrita. O login só acontece
+# no job de publicação, noutra máquina, depois de o build acabar.
+name: image
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .github/workflows/image.yml
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  UPSTREAM_SHA: 6e4da23cf7a0fa27f8fd6cf9b5a141abe331ce3c
+  IMG: ghcr.io/angryjoker/gods-eye-view:6e4da23-vite645
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          repository: bilawalsidhu/gods-eye-view
+          ref: ${{ env.UPSTREAM_SHA }}
+          path: src
+          persist-credentials: false
+      - name: confirmar o commit do projeto
+        run: test "$(git -C src rev-parse HEAD)" = "$UPSTREAM_SHA"
+      - name: construir
+        run: |
+          docker build -f Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${UPSTREAM_SHA}" \
+            -t "$IMG" src
+      - name: diff do lock depois do patch
+        run: |
+          docker run --rm --entrypoint cat "$IMG" /tmp/package-lock.patched.json > patched.json
+          diff -u src/package-lock.json patched.json | tee lock.diff || true
+          { echo '### Diff do lock'; echo '```diff'; cat lock.diff; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: confirmar que a imagem não traz .env
+        run: docker run --rm --entrypoint sh "$IMG" -c 'test ! -e /app/.env'
+      - name: testar com as restrições do compose
+        run: |
+          docker run -d --name t --user 1000:1000 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 1g --pids-limit 256 \
+            --tmpfs /tmp \
+            --tmpfs /app/.gev-cache:uid=1000,gid=1000 \
+            --tmpfs /app/.gev-logs:uid=1000,gid=1000 \
+            --tmpfs /app/node_modules/.vite:uid=1000,gid=1000 \
+            -e GEV_KEY_SETUP_TRUSTED_PEERS=none \
+            -e GEV_ALLOWED_HOSTS=gev.newt-matrix.ts.net \
+            -p 127.0.0.1:4173:4173 "$IMG"
+          ok=
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null -H 'Host: gev.newt-matrix.ts.net' http://127.0.0.1:4173/; then ok=1; break; fi
+            sleep 3
+          done
+          docker logs --tail 40 t
+          test -n "$ok"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: falso.example' http://127.0.0.1:4173/)
+          echo "Host falso: $code"
+          test "$code" = 403
+          docker rm -f t
+      - name: guardar a imagem
+        run: docker save -o image.tar "$IMG"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image
+          path: image.tar
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image
+      - name: publicar
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          docker load -i image.tar
+          echo "$TOKEN" | docker login ghcr.io -u "$OWNER" --password-stdin
+          docker push "$IMG"
+          DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMG" | cut -d@ -f2)
+          echo "image: $IMG@$DIGEST" | tee -a "$GITHUB_STEP_SUMMARY"
