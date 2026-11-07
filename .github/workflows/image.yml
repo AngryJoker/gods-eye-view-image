@@ -54,6 +54,7 @@ jobs:
             --tmpfs /app/.gev-cache:uid=1000,gid=1000 \
             --tmpfs /app/.gev-logs:uid=1000,gid=1000 \
             --tmpfs /app/node_modules/.vite:uid=1000,gid=1000 \
+            --tmpfs /app/node_modules/.vite-temp:uid=1000,gid=1000 \
             -e GEV_KEY_SETUP_TRUSTED_PEERS=none \
             -e GEV_ALLOWED_HOSTS=gev.newt-matrix.ts.net \
             -p 127.0.0.1:4173:4173 "$IMG"
